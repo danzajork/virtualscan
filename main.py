@@ -1,6 +1,8 @@
 #!/usr/bin/python3
+import json
 import sys
 import os
+import concurrent.futures
 import tldextract
 import requests
 from tqdm import tqdm
@@ -27,23 +29,59 @@ def build_wordlist(url, words):
 
     return word_list
 
-def scan(url, words):
-
-    word_list = build_wordlist(url, words)
-
-    for host in word_list:
+def make_request_host(url, host):
+    try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:96.0) Gecko/20100101 Firefox/96.0",
             "Host": host,
             "Accept": "*/*"
         }
 
-        try:
-            response = requests.get(url, headers=headers, timeout=5, allow_redirects=True, verify=False)
-            length = len(response.content)
-            print(str(f"[*] {response.status_code} : {length} : {url} : {host}"))
-        except Exception as e:
-            pass
+        response = requests.get(url, headers=headers, timeout=5, allow_redirects=True, verify=False)
+        length = len(response.content)
+
+        return {
+            "status_code": response.status_code,
+            "length": length,
+            "url": url,
+            "host": host
+        }
+        
+    except Exception as e:
+        print(e)
+
+def check_url_for_vhosts(hosts, url, num_threads = 20):
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        future_to_url = {executor.submit(make_request_host, url, host): host for host in hosts}
+        for future in tqdm(concurrent.futures.as_completed(future_to_url), total=len(hosts), unit=" hosts"):
+            sub_ns_sc = future_to_url[future]
+            try:
+                if future.result() is not None:
+                    results.append(future.result())
+            except Exception as e:
+                print(e)
+                raise
+    return results
+
+def scan(url, words, thread_default, out):
+    host_list = build_wordlist(url, words)
+
+    results = check_url_for_vhosts(host_list, url, thread_default)
+    
+    if out:
+        with open(out, "w") as file:
+            for final_resp in results:
+                json_obj = json.dumps(final_resp)
+                file.write(f"{json_obj}\n")
+    else:
+        for final_resp in results:
+
+            status_code = final_resp["status_code"]
+            length = final_resp["length"]
+            host = final_resp["host"]
+           
+            print(f"[*] {status_code} : {length} : {url} : {host}")
 
 def main():
     """
@@ -53,6 +91,7 @@ def main():
     parser.add_argument("-u", "--url", dest="url", help="url to target")
     parser.add_argument("-w", "--word-list", dest="word_list", help="custom word list")
     parser.add_argument("-t", "--threads", dest="threads", help="number of threads")
+    parser.add_argument("-o", "--out", dest="output", help="file to output json")
 
     args = parser.parse_args()
 
@@ -60,7 +99,7 @@ def main():
         parser.print_help()
         exit(1)
 
-    thread_default = 40 
+    thread_default = 20 
     if args.threads:
         thread_default = int(args.threads)
 
@@ -79,7 +118,7 @@ def main():
             with open(BUILT_IN_WORD_LIST, "r") as file:
                 words = [line.rstrip() for line in file]
 
-    scan(args.url, words)
+    scan(args.url, words, thread_default, args.output)
 
 
 if __name__ == "__main__":
