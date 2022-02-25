@@ -1,7 +1,7 @@
 # virtualscan
 This tool is a virtual host scanner that can be used to detect vhost hopping.
 
-
+Supports terminal and JSON output to integrate with other tools.
 
 ## virtualscan
 
